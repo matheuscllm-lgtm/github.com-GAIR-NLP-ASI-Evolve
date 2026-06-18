@@ -1,0 +1,7 @@
+# asi-core run configuration (see asi_core/config.py).
+rounds: 300
+strategy: greedy        # random | greedy | ucb1 | map_elites
+retrieval_k: 3          # how many cognition entries seed each DESIGN step
+ucb_c: 1.4              # exploration constant for the ucb1 strategy
+seed: 0
+model: ""               # identifier for an LLM-backed agent (optional)
