@@ -1,6 +1,6 @@
 ---
 description: Modo autônomo — executa a tarefa ponta a ponta (corrige, integra, testa, commita, abre PR draft, mergeia só quando trivialmente seguro) sem pedir confirmação, salvo risco alto. Checkpoints frequentes.
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Task, TaskCreate, TaskUpdate, TaskList, WebFetch, WebSearch, mcp__github__push_files, mcp__github__create_pull_request, mcp__github__list_branches, mcp__github__create_branch, mcp__github__get_file_contents, mcp__github__list_commits, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__update_pull_request, mcp__github__actions_list, mcp__github__actions_get, mcp__github__subscribe_pr_activity, mcp__github__add_issue_comment
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Task, TaskCreate, TaskUpdate, TaskList, WebFetch, WebSearch, mcp__github__push_files, mcp__github__create_pull_request, mcp__github__list_branches, mcp__github__create_branch, mcp__github__get_file_contents, mcp__github__list_commits, mcp__github__list_pull_requests, mcp__github__search_pull_requests, mcp__github__pull_request_read, mcp__github__update_pull_request, mcp__github__merge_pull_request, mcp__github__actions_list, mcp__github__actions_get, mcp__github__get_check_run, mcp__github__get_job_logs, mcp__github__run_secret_scanning, mcp__github__subscribe_pr_activity, mcp__github__add_issue_comment
 ---
 
 Você foi acionado pelo comando **`/auto`** (modo autônomo) do operador.
@@ -17,14 +17,17 @@ contrato. Adote-o até a entrega estar completa.
 
 Execute estes passos na ordem, em paralelo onde possível:
 
-1. **Identifica o repo atual**: leia o `CLAUDE.md` (ou `README.md` /
-   `system-prompt.md`) do repo para invariantes e o comando de teste correto.
+1. **Identifica o repo atual**: leia o `CLAUDE.md` do repo para invariantes e o
+   comando de teste correto (cada scanner tem o seu — não assuma `pytest` cegamente).
 2. **Verifica handoff**: se existir `SESSION-HANDOFF.md` na raiz, leia antes de
    agir — é a continuação canônica. Ausência em clone limpo é esperada, não é erro.
 3. **Confirma a branch de trabalho**: a sessão já define a branch (`claude/…` no
    system prompt). Nunca assuma `main`. Se a branch não existir localmente,
    crie com `git checkout -b <branch>` e `git push -u origin <branch>`.
-4. **Ambiente (nuvem)**: `gh` CLI **NÃO está disponível** neste container — use as
+4. **Verifica se há trabalho pendente real**: rode `git diff --stat origin/main <branch>`
+   — se vier vazio, a branch já está mergeada/atualizada (squash merge deixa diff
+   vazio mesmo sem `--merged`). Não trate branch defasada como pendência real.
+5. **Ambiente (nuvem)**: `gh` CLI **NÃO está disponível** neste container — use as
    ferramentas `mcp__github__*` para todas as operações GitHub (criar PR, listar
    branches, verificar CI). `git push -u origin <branch>` via Bash ainda funciona
    para o push em si.
@@ -40,15 +43,14 @@ Execute estes passos na ordem, em paralelo onde possível:
   unidade lógica concluída, ~a cada 10 min de progresso). Nunca acumule horas de
   trabalho sem commitar — checkpoint é o que garante que nada se perde.
 - **Usa as ferramentas úteis sem pedir licença pra cada uma**: GitHub (via
-  `mcp__github__*`), web (WebFetch/WebSearch), subagentes (Agent).
-- **Tarefa multi-repo**: se a mudança toca mais de um repo, cria commit + PR
+  `mcp__github__*`), APIs de preço, web (WebFetch/WebSearch), subagentes (Agent).
+- **Tarefa multi-repo**: se a mudança toca mais de um scanner, cria commit + PR
   em CADA repo afetado e lista todos no resumo final.
 
 ## 2. Quando agir sozinho (NÃO pedir confirmação)
 
-Mudanças de **baixo risco**: código, testes, documentação, refactor, rodar
-testes/análises de leitura, abrir PR draft. Apenas faça, e relate no resumo
-final.
+Mudanças de **baixo risco**: código, testes, documentação, refactor, rodar um
+scan de leitura, abrir PR draft. Apenas faça, e relate no resumo final.
 
 ## 3. Quando PARAR e perguntar (risco alto — exceções duras)
 
@@ -67,11 +69,16 @@ Na dúvida entre "baixo" e "alto" risco, trate como alto.
 
 - O **padrão deste ambiente é PR como DRAFT**. Ao terminar e dar push, **sempre
   crie um PR draft** via `mcp__github__create_pull_request` se ainda não existir.
+  Antes de criar: use `mcp__github__list_pull_requests` com `head=<branch>` para
+  verificar se já existe PR aberto — não duplique.
 - **Mergear sozinho só mudança trivialmente segura** (doc, teste verde isolado).
   Qualquer coisa com peso: deixe o PR pronto, com resumo, e **aponte pro
   operador decidir** — não mergeie.
 - Antes de mergear/abrir PR: **revise o diff**, **rode os checks possíveis** e
-  **varra por segredos**.
+  **varra por segredos** (`mcp__github__run_secret_scanning`).
+- Após criar o PR: verifique o status do CI via `mcp__github__get_check_run`;
+  se o CI falhar, investigue os logs (`mcp__github__get_job_logs`) e corrija
+  antes de reportar como concluído.
 
 ## 5. Validação por segundo agente (honestidade)
 
@@ -91,14 +98,21 @@ pedir confirmação.
 
 ## 7. Invariantes que o modo autônomo NUNCA quebra
 
-- **Respeite as regras do repo**: leia e siga o `CLAUDE.md` / `README.md` /
-  `system-prompt.md` do projeto (cada repo tem as suas). O modo autônomo
-  **acelera** o trabalho — **não autoriza** ignorar as convenções do projeto.
-- **Nunca fabrique dado/resultado**: fonte falhou → rotule o erro/fallback e
-  siga; jamais invente número, citação ou referência.
+- **Respeite o `CLAUDE.md` do repo**: margem **BRUTA 30%**, **NM-only** (match
+  exato `== "NM"`), **nunca inventar preço** (fonte falhou → fallback rotulado),
+  **entrega = tabela markdown no chat** gerada pela ferramenta do repo (nunca
+  arquivo por padrão).
+- **Outputs de scan são gitignored de propósito** (`results/*.xlsx`,
+  `results/*.md`, `outputs/`): NUNCA commite dados de scan — só código e doc.
 - **Desenvolva na branch designada** da sessão; **nunca** dê push direto na
   `main`.
 - **Nunca** commite segredo/chave.
+- **Comando de teste varia por scanner**: sempre leia o `CLAUDE.md` do repo —
+  não assuma `pytest` sem verificar. Se o CLAUDE.md não disser, procure
+  `pytest.ini`, `pyproject.toml`, `.github/workflows/ci.yml` ou pasta `tests/`.
+- **NUNCA afirme "testes passaram" sem mostrar o output real**: copie o resultado
+  do terminal (ou parte relevante). Se pulou os testes por impossibilidade
+  técnica, diga explicitamente — nunca invente sucesso.
 
 ## 8. Encerramento (obrigatório)
 
@@ -108,5 +122,6 @@ Termine **sempre** com um resumo curto e honesto:
 - **repos e branches** afetados;
 - commits/PRs criados (com links);
 - testes rodados e **resultado real** (se algo falhou ou foi pulado, diga);
+- status do CI (via `mcp__github__get_check_run`, se disponível);
 - merges feitos;
 - riscos e pendências em aberto.
